@@ -12,11 +12,11 @@ import Enquire from "./enquire";
 export default function Home() {
   return (
     <>
-      <Banner/>
-      <LaptopDeals />
-      <BudgerRefurbished />
-      <CrazyRefurbished />
+      <Banner />
       <Deals />
+      <BudgerRefurbished />
+      <LaptopDeals />
+      <CrazyRefurbished />
       <Customer />
       <Clients />
       <Enquire />
