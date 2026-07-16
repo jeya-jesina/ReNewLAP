@@ -1,6 +1,6 @@
 import React from 'react';
 
-const NavigationBar = () => {
+const Header = () => {
   return (
     <nav className="flex flex-wrap items-center justify-between px-6 py-4 bg-white shadow-sm border-b border-gray-200">
       {/* Left section: Logo / Brand */}
@@ -89,4 +89,4 @@ const NavigationBar = () => {
   );
 };
 
-export default NavigationBar;
+export default Header;
