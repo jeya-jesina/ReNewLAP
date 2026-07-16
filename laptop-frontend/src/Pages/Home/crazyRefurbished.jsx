@@ -1,7 +1,7 @@
 import React from 'react'
 
-export default function crazyRefurbished() {
+export default function CrazyRefurbished() {
   return (
-    <div>crazyRefurbished</div>
+    <div>CrazyRefurbished</div>
   )
 }

@@ -1,6 +1,6 @@
 import React from 'react'
 
-export default function banner() {
+export default function Banner() {
   return (
     <div>banner</div>
   )
