@@ -1,0 +1,778 @@
+
+import { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
+import api from "../../services/api";
+
+import {
+  FileText, Search, ChevronLeft, ChevronRight,
+  Eye, Receipt, Download, Filter, X, FileDown, TrendingUp,
+} from "lucide-react";
+
+import * as XLSX from "xlsx";
+import { saveAs } from "file-saver";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+
+/* ─── Styles ─────────────────────────────────────────── */
+function useStyles() {
+  useEffect(() => {
+    const id = "reports-styles-v3";
+    if (document.getElementById(id)) return;
+    const s = document.createElement("style");
+    s.id = id;
+    s.innerHTML = `
+      @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+      .rp * { box-sizing: border-box; }
+      @keyframes rp-in { from { opacity:0; transform:translateY(14px);} to { opacity:1; transform:none;} }
+      @keyframes fadeSlide { from { opacity:0; transform:translateY(-8px);} to { opacity:1; transform:none;} }
+      .rp-row { transition: background .15s; cursor: pointer; font-size:12px; }
+      .rp-row:hover td { background: #f5f7ff !important; }
+      .rp-view-btn { transition: all .18s; }
+      .rp-pg-btn  { transition: all .18s; }
+      .rp-pg-btn:hover:not(:disabled) { background: #e0e7ff !important; color: #4338ca !important; }
+      .rp-search:focus { border-color: #6366f1 !important; box-shadow: 0 0 0 3px rgba(99,102,241,.1) !important; }
+      .rp-card { animation: rp-in .4s ease both; }
+      .filter-panel { animation: fadeSlide .25s ease both; }
+      .rp-filter-input:focus { border-color: #6366f1 !important; box-shadow: 0 0 0 3px rgba(99,102,241,.08) !important; outline: none; }
+      .rp-dl-btn:hover { opacity:.88; transform:translateY(-1px); }
+      .rp-dl-btn { transition: all .18s; }
+      .rp-cb { width:15px; height:15px; cursor:pointer; accent-color:#4338ca; }
+    `;
+    document.head.appendChild(s);
+    return () => document.head.removeChild(s);
+  }, []);
+}
+
+/* ─── Constants ─────────────────────────────────────── */
+const FONT   = "'Plus Jakarta Sans', sans-serif";
+const INDIGO = "#4338ca";
+
+const PAYMENT_METHODS  = ["all", "cash", "online", "upi", "credit"];
+const METHOD_LABEL     = { all:"All Methods", cash:"Cash", online:"Online", upi:"UPI", credit:"Credit" };
+const PAYMENT_STATUSES = ["all", "paid", "pending", "not_paid", "overdue"];
+const STATUS_LABEL     = { all:"All Status", paid:"Paid", pending:"Pending", not_paid:"Not Paid", overdue:"Overdue" };
+
+const statusBadge = (s) => {
+  const map = {
+    paid:     { bg:"#dcfce7", color:"#15803d" },
+    pending:  { bg:"#dbeafe", color:"#1d4ed8" },
+    not_paid: { bg:"#fee2e2", color:"#dc2626" },
+    overdue:  { bg:"#fef3c7", color:"#b45309" },
+  };
+  return map[s?.toLowerCase()] || { bg:"#f1f5f9", color:"#64748b" };
+};
+
+const methodBadge = (m) => {
+  const map = {
+    cash:   { bg:"#dcfce7", color:"#15803d" },
+    online: { bg:"#dbeafe", color:"#1d4ed8" },
+    upi:    { bg:"#f3e8ff", color:"#7e22ce" },
+    credit: { bg:"#fef3c7", color:"#b45309" },
+  };
+  return map[m?.toLowerCase()] || { bg:"#fee2e2", color:"#dc2626" };
+};
+
+/* ─── Summary Card ──────────────────────────────────── */
+function SummaryCard({ label, value, color, icon }) {
+  return (
+    <div style={{
+      background:"#fff", border:"1.5px solid #e0e7ff", borderRadius:16,
+      padding:"14px 20px", display:"flex", alignItems:"center", gap:14,
+      minWidth:170, flex:1,
+    }}>
+      <div style={{
+        width:40, height:40, borderRadius:12, background:color+"18",
+        display:"flex", alignItems:"center", justifyContent:"center",
+      }}>{icon}</div>
+      <div>
+        <div style={{ fontSize:11, color:"#9ca3af", fontWeight:600 }}>{label}</div>
+        <div style={{ fontSize:15, fontWeight:800, color:"#1e1b4b" }}>{value}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Main ──────────────────────────────────────────── */
+export default function Reports() {
+  useStyles();
+  const navigate = useNavigate();
+
+  const user = JSON.parse(localStorage.getItem("user") || "{}");
+  // Works for both admin and cashier:
+  // admin  → user.id is the admin_id
+  // cashier→ user.admin_id is the admin_id
+  const adminId = user.role === "admin" ? user.id : (user.admin_id || null);
+
+  /* ── state ── */
+  const [companies,     setCompanies]     = useState([]);
+  const [selectedComp,  setSelectedComp]  = useState("all"); // "all" or company id string
+  const [invoices,      setInvoices]      = useState([]);
+  const [summary,       setSummary]       = useState(null);
+  const [loading,       setLoading]       = useState(false);
+  const [search,        setSearch]        = useState("");
+  const [currentPage,   setCurrentPage]   = useState(1);
+  const [showFilter,    setShowFilter]    = useState(false);
+
+  /* filter fields */
+  const [fromDate,       setFromDate]       = useState("");
+  const [toDate,         setToDate]         = useState("");
+  const [paymentMethod,  setPaymentMethod]  = useState("all");
+  const [paymentStatus,  setPaymentStatus]  = useState("all");
+  const [customerFilter, setCustomerFilter] = useState("");
+
+  /* checkbox */
+  const [checkedIds, setCheckedIds] = useState(new Set());
+
+  const recordsPerPage = 10;
+
+  /* ── fetch companies by admin ── */
+  useEffect(() => {
+    if (!adminId) return;
+    api.get(`/company/get_companies_by_admin.php?admin_id=${adminId}`)
+      .then(res => {
+        if (res.data.status) setCompanies(res.data.data);
+      })
+      .catch(console.error);
+  }, [adminId]);
+
+  /* ── fetch invoices ── */
+  const fetchFiltered = useCallback(async (overrides = {}) => {
+    const compId = overrides.selectedComp ?? selectedComp;
+
+    // Need at least one company to query
+    if (!adminId) return;
+
+    setLoading(true);
+    setCheckedIds(new Set());
+
+    try {
+      // If "all" → fetch for every company under this admin in parallel
+      // then merge results
+      let allRows = [];
+      let mergedSummary = {
+        total_invoices: 0, total_amount: 0, total_paid: 0, total_pending: 0,
+      };
+
+      const companyIds =
+        compId === "all"
+          ? companies.map(c => c.id)
+          : [parseInt(compId)];
+
+      if (companyIds.length === 0) {
+        setInvoices([]);
+        setSummary(mergedSummary);
+        setLoading(false);
+        return;
+      }
+
+      const requests = companyIds.map(cid =>
+        api.post("/invoice/get_filtered_invoices.php", {
+          company_id:     cid,
+          from_date:      overrides.fromDate       ?? fromDate,
+          to_date:        overrides.toDate         ?? toDate,
+          payment_method: overrides.paymentMethod  ?? paymentMethod,
+          payment_status: overrides.paymentStatus  ?? paymentStatus,
+          customer_name:  overrides.customerFilter ?? customerFilter,
+        })
+      );
+
+      const responses = await Promise.all(requests);
+
+      responses.forEach(res => {
+        if (res.data.status) {
+          allRows = [...allRows, ...res.data.data];
+          mergedSummary.total_invoices += res.data.summary.total_invoices;
+          mergedSummary.total_amount   += res.data.summary.total_amount;
+          mergedSummary.total_paid     += res.data.summary.total_paid;
+          mergedSummary.total_pending  += res.data.summary.total_pending;
+        }
+      });
+
+      // Sort by id desc (latest first)
+      allRows.sort((a, b) => b.id - a.id);
+
+      setInvoices(allRows);
+      setSummary(mergedSummary);
+      setCurrentPage(1);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }, [adminId, companies, selectedComp, fromDate, toDate, paymentMethod, paymentStatus, customerFilter]);
+
+  // Initial load after companies are fetched
+  useEffect(() => {
+    if (companies.length > 0 || adminId) fetchFiltered();
+  }, [companies]); // eslint-disable-line
+
+  /* ── filtered (client-side search) ── */
+  const filtered = invoices.filter(inv =>
+    inv.invoice_no?.toLowerCase().includes(search.toLowerCase()) ||
+    inv.customer_name?.toLowerCase().includes(search.toLowerCase()) ||
+    inv.customer_phone?.includes(search)
+  );
+
+  /* ── pagination ── */
+  const totalPages   = Math.ceil(filtered.length / recordsPerPage);
+  const indexOfFirst = (currentPage - 1) * recordsPerPage;
+  const current      = filtered.slice(indexOfFirst, indexOfFirst + recordsPerPage);
+  const goTo         = p => setCurrentPage(Math.max(1, Math.min(p, totalPages)));
+
+  /* ── applied filter count ── */
+  const appliedCount = [
+    fromDate || toDate,
+    paymentMethod !== "all",
+    paymentStatus !== "all",
+    customerFilter,
+    selectedComp !== "all",
+  ].filter(Boolean).length;
+
+  /* ── apply / reset ── */
+  const applyFilter = () => fetchFiltered();
+
+  const resetFilter = () => {
+    setFromDate(""); setToDate("");
+    setPaymentMethod("all"); setPaymentStatus("all");
+    setCustomerFilter(""); setSelectedComp("all");
+    fetchFiltered({
+      fromDate:"", toDate:"",
+      paymentMethod:"all", paymentStatus:"all",
+      customerFilter:"", selectedComp:"all",
+    });
+  };
+
+  /* ── checkbox helpers ── */
+  const toggleCheck = (invoiceNo, e) => {
+    e.stopPropagation();
+    setCheckedIds(prev => {
+      const next = new Set(prev);
+      next.has(invoiceNo) ? next.delete(invoiceNo) : next.add(invoiceNo);
+      return next;
+    });
+  };
+
+  const allCurrentChecked =
+    current.length > 0 &&
+    current.every(inv => checkedIds.has(inv.invoice_no));
+
+  const toggleAll = () => {
+    if (allCurrentChecked) {
+      setCheckedIds(prev => {
+        const next = new Set(prev);
+        current.forEach(inv => next.delete(inv.invoice_no));
+        return next;
+      });
+    } else {
+      setCheckedIds(prev => {
+        const next = new Set(prev);
+        current.forEach(inv => next.add(inv.invoice_no));
+        return next;
+      });
+    }
+  };
+
+  const selectedRows = filtered.filter(inv => checkedIds.has(inv.invoice_no));
+
+  /* ── Excel ── */
+  const buildExcelData = (rows) =>
+    rows.map((inv) => ({
+      "GST Number":           inv.gstin || "-",
+      "Invoice No":           inv.invoice_no,
+      "Customer Name":        inv.customer_name,
+      "Phone":                inv.customer_phone,
+      "Invoice Generated By": inv.cashier_name || "-",
+      "Payment Method":       inv.payment_method,
+      "Payment Status":       inv.payment_status,
+      "Total Amount":         `₹${Number(inv.total_amount).toLocaleString()}`,
+      "Paid Amount":          `₹${Number(inv.paid_amount).toLocaleString()}`,
+      "Balance Amount":       `₹${Number(inv.balance_amount).toLocaleString()}`,
+      "Date":                 inv.created_at,
+    }));
+
+  const downloadExcel = (rows, label) => {
+    if (!rows.length) { alert("No data to export"); return; }
+    const ws = XLSX.utils.json_to_sheet(buildExcelData(rows));
+    ws["!cols"] = [
+      {wch:22},{wch:20},{wch:28},{wch:16},
+      {wch:22},{wch:16},{wch:16},{wch:16},{wch:16},{wch:16},{wch:22},
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Invoice Report");
+    const buf = XLSX.write(wb, { bookType:"xlsx", type:"array" });
+    saveAs(
+      new Blob([buf], { type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+      `invoice_report_${label}.xlsx`
+    );
+  };
+
+  /* ── PDF ── */
+  const downloadPDF = (rows, label) => {
+    if (!rows.length) { alert("No data to export"); return; }
+    const doc = new jsPDF({ orientation:"landscape" });
+    doc.setFontSize(14); doc.setTextColor(67,56,202);
+    doc.text("Invoice Report", 14, 16);
+    doc.setFontSize(9); doc.setTextColor(120,120,120);
+    doc.text(`Generated: ${new Date().toLocaleString("en-IN")}   |   Filter: ${label}`, 14, 23);
+    autoTable(doc, {
+      startY: 28,
+      head: [["GST Number","Invoice No","Customer","Phone","Generated By","Method","Status","Total","Paid","Balance","Date"]],
+      body: rows.map(inv => [
+        inv.gstin||"-", inv.invoice_no, inv.customer_name, inv.customer_phone,
+        inv.cashier_name||"-", inv.payment_method, inv.payment_status,
+        `Rs.${Number(inv.total_amount).toFixed(2)}`,
+        `Rs.${Number(inv.paid_amount).toFixed(2)}`,
+        `Rs.${Number(inv.balance_amount).toFixed(2)}`,
+        inv.created_at?.split(" ")[0]||"",
+      ]),
+      headStyles:{ fillColor:[67,56,202], textColor:255, fontStyle:"bold", fontSize:7 },
+      bodyStyles:{ fontSize:7 },
+      alternateRowStyles:{ fillColor:[238,242,255] },
+      columnStyles:{
+        0:{cellWidth:28},1:{cellWidth:22},2:{cellWidth:28},3:{cellWidth:20},
+        4:{cellWidth:22},5:{cellWidth:16},6:{cellWidth:16},7:{cellWidth:18},
+        8:{cellWidth:18},9:{cellWidth:18},10:{cellWidth:22},
+      },
+      styles:{ cellPadding:2.5 },
+    });
+    const finalY = doc.lastAutoTable.finalY + 8;
+    doc.setFontSize(9); doc.setTextColor(67,56,202);
+    doc.text(
+      `Total: ${rows.length} invoices  |  ` +
+      `Amount: Rs.${rows.reduce((s,r)=>s+Number(r.total_amount),0).toFixed(2)}  |  ` +
+      `Paid: Rs.${rows.reduce((s,r)=>s+Number(r.paid_amount),0).toFixed(2)}  |  ` +
+      `Pending: Rs.${rows.reduce((s,r)=>s+Number(r.balance_amount),0).toFixed(2)}`,
+      14, finalY
+    );
+    doc.save(`invoice_report_${label}.pdf`);
+  };
+
+  /* ── filter label ── */
+  const filterLabel = () => {
+    const parts = [];
+    if (selectedComp !== "all") {
+      const c = companies.find(c => String(c.id) === String(selectedComp));
+      if (c) parts.push(c.company_name.replace(/\s+/g,"_"));
+    }
+    if (fromDate)  parts.push(`from_${fromDate}`);
+    if (toDate)    parts.push(`to_${toDate}`);
+    if (paymentMethod !== "all") parts.push(paymentMethod);
+    if (paymentStatus !== "all") parts.push(paymentStatus);
+    return parts.length ? parts.join("_") : "all";
+  };
+
+  /* ── shared styles ── */
+  const inputStyle = {
+    width:"100%", padding:"9px 12px",
+    border:"1.5px solid #e0e7ff", borderRadius:10,
+    fontSize:12, fontFamily:FONT,
+    background:"#fff", color:"#1e1b4b",
+  };
+  const selectStyle = { ...inputStyle, cursor:"pointer" };
+  const btnPrimary = {
+    background:INDIGO, border:"none", color:"#fff",
+    padding:"10px 18px", borderRadius:12,
+    fontSize:12, fontWeight:700, cursor:"pointer",
+    fontFamily:FONT, display:"flex", alignItems:"center", gap:7,
+  };
+
+  /* ── render ── */
+  return (
+    <div className="rp" style={{ fontFamily:FONT, padding:"22px 26px" }}>
+
+      {/* HEADER */}
+      <div style={{
+        display:"flex", alignItems:"center",
+        justifyContent:"space-between",
+        marginBottom:20, flexWrap:"wrap", gap:14,
+      }}>
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <div style={{ fontSize:22 }}>🧾</div>
+          <div>
+            <h1 style={{ margin:0, fontSize:18, fontWeight:800, color:"#1e1b4b" }}>
+              Invoice Reports
+            </h1>
+            <p style={{ margin:"2px 0 0", fontSize:12, color:"#9ca3af" }}>
+              Filter by company · search · download PDF & Excel
+            </p>
+          </div>
+        </div>
+{/* HEADER BUTTONS - replace the entire buttons div */}
+<div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
+  {checkedIds.size > 0 && (
+    <span style={{
+      background:"#eef2ff", color:INDIGO,
+      fontWeight:700, fontSize:12,
+      padding:"8px 14px", borderRadius:10,
+      border:`1.5px solid #c7d2fe`,
+    }}>
+      {checkedIds.size} selected
+    </span>
+  )}
+  <button
+    className="rp-dl-btn"
+    onClick={() =>
+      checkedIds.size > 0
+        ? downloadExcel(selectedRows, `selected_${filterLabel()}`)
+        : downloadExcel(filtered, filterLabel())
+    }
+    style={{ ...btnPrimary, background:"#16a34a" }}
+  >
+    <Download size={14} />
+    {checkedIds.size > 0 ? `Excel (${checkedIds.size})` : "Excel"}
+  </button>
+  <button
+    className="rp-dl-btn"
+    onClick={() => downloadPDF(filtered, filterLabel())}
+    style={{ ...btnPrimary, background:"#dc2626" }}
+  >
+    <FileDown size={14} /> PDF
+  </button>
+</div>
+      </div>
+
+      {/* SUMMARY */}
+      {summary && (
+        <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginBottom:20 }}>
+          <SummaryCard label="Total Invoices" value={summary.total_invoices}
+            color="#4338ca" icon={<Receipt size={18} color="#4338ca" />} />
+          <SummaryCard label="Total Amount"
+            value={`₹${Number(summary.total_amount).toLocaleString()}`}
+            color="#0891b2" icon={<TrendingUp size={18} color="#0891b2" />} />
+          <SummaryCard label="Total Paid"
+            value={`₹${Number(summary.total_paid).toLocaleString()}`}
+            color="#16a34a" icon={<TrendingUp size={18} color="#16a34a" />} />
+          <SummaryCard label="Total Pending"
+            value={`₹${Number(summary.total_pending).toLocaleString()}`}
+            color="#dc2626" icon={<TrendingUp size={18} color="#dc2626" />} />
+        </div>
+      )}
+
+      {/* SEARCH + FILTER ROW */}
+      <div style={{ display:"flex", gap:10, marginBottom:18, alignItems:"center", flexWrap:"wrap" }}>
+
+        {/* Company Selector */}
+        {/* <select
+          className="rp-filter-input"
+          value={selectedComp}
+          onChange={e => setSelectedComp(e.target.value)}
+          style={{
+            ...selectStyle,
+            width:"auto", minWidth:180,
+            border:"1.5px solid #c7d2fe",
+            borderRadius:12,
+            padding:"10px 14px",
+          }}
+        >
+          <option value="all">🏢 All Companies</option>
+          {companies.map(c => (
+            <option key={c.id} value={c.id}>{c.company_name}</option>
+          ))}
+        </select> */}
+
+        {/* Search */}
+        <div style={{ position:"relative", flex:1, minWidth:200 }}>
+          <Search size={15} color="#6366f1" style={{
+            position:"absolute", left:14,
+            top:"50%", transform:"translateY(-50%)",
+          }} />
+          <input
+            className="rp-search"
+            value={search}
+            onChange={e => { setSearch(e.target.value); setCurrentPage(1); }}
+            placeholder="Search by invoice no, customer, phone…"
+            style={{
+              width:"100%", padding:"11px 14px 11px 40px",
+              background:"#fff", border:"1.5px solid #e0e7ff",
+              borderRadius:12, fontSize:12, outline:"none", fontFamily:FONT,
+            }}
+          />
+        </div>
+
+        {/* Filter toggle */}
+        <button
+          onClick={() => setShowFilter(v => !v)}
+          style={{
+            ...btnPrimary,
+            background: showFilter ? INDIGO : "#eef2ff",
+            color: showFilter ? "#fff" : INDIGO,
+            position:"relative",
+          }}
+        >
+          <Filter size={14} /> Filter
+          {appliedCount > 0 && (
+            <span style={{
+              position:"absolute", top:-6, right:-6,
+              background:"#dc2626", color:"#fff",
+              borderRadius:"50%", width:18, height:18,
+              display:"flex", alignItems:"center",
+              justifyContent:"center", fontSize:10, fontWeight:800,
+            }}>{appliedCount}</span>
+          )}
+        </button>
+
+        {appliedCount > 0 && (
+          <button onClick={resetFilter}
+            style={{ ...btnPrimary, background:"#fee2e2", color:"#dc2626" }}>
+            <X size={13} /> Reset
+          </button>
+        )}
+      </div>
+
+      {/* FILTER PANEL */}
+      {showFilter && (
+        <div className="filter-panel" style={{
+          background:"#fff", border:"1.5px solid #e0e7ff",
+          borderRadius:18, padding:"20px 22px", marginBottom:18,
+          display:"grid",
+          gridTemplateColumns:"repeat(auto-fit, minmax(170px, 1fr))",
+          gap:14,
+        }}>
+          <div>
+            <label style={{ fontSize:11, fontWeight:700, color:"#4338ca", display:"block", marginBottom:6 }}>Company</label>
+            <select
+              className="rp-filter-input"
+              value={selectedComp}
+              onChange={e => setSelectedComp(e.target.value)}
+              style={selectStyle}
+            >
+              <option value="all">All Companies</option>
+              {companies.map(c => (
+                <option key={c.id} value={c.id}>{c.company_name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label style={{ fontSize:11, fontWeight:700, color:"#4338ca", display:"block", marginBottom:6 }}>From Date</label>
+            <input type="date" className="rp-filter-input" value={fromDate}
+              onChange={e => setFromDate(e.target.value)} style={inputStyle} />
+          </div>
+
+          <div>
+            <label style={{ fontSize:11, fontWeight:700, color:"#4338ca", display:"block", marginBottom:6 }}>To Date</label>
+            <input type="date" className="rp-filter-input" value={toDate}
+              onChange={e => setToDate(e.target.value)} style={inputStyle} />
+          </div>
+
+          <div>
+            <label style={{ fontSize:11, fontWeight:700, color:"#4338ca", display:"block", marginBottom:6 }}>Payment Method</label>
+            <select className="rp-filter-input" value={paymentMethod}
+              onChange={e => setPaymentMethod(e.target.value)} style={selectStyle}>
+              {PAYMENT_METHODS.map(m => (
+                <option key={m} value={m}>{METHOD_LABEL[m]}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label style={{ fontSize:11, fontWeight:700, color:"#4338ca", display:"block", marginBottom:6 }}>Payment Status</label>
+            <select className="rp-filter-input" value={paymentStatus}
+              onChange={e => setPaymentStatus(e.target.value)} style={selectStyle}>
+              {PAYMENT_STATUSES.map(s => (
+                <option key={s} value={s}>{STATUS_LABEL[s]}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label style={{ fontSize:11, fontWeight:700, color:"#4338ca", display:"block", marginBottom:6 }}>Customer Name</label>
+            <input type="text" className="rp-filter-input" value={customerFilter}
+              onChange={e => setCustomerFilter(e.target.value)}
+              placeholder="Search customer…" style={inputStyle} />
+          </div>
+
+          <div style={{ display:"flex", flexDirection:"column", justifyContent:"flex-end", gap:8 }}>
+            <button onClick={applyFilter} style={{ ...btnPrimary, justifyContent:"center" }}>
+              Apply Filter
+            </button>
+            <button onClick={resetFilter} style={{
+              ...btnPrimary, background:"#f1f5f9",
+              color:"#64748b", justifyContent:"center",
+            }}>
+              Reset All
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* TABLE */}
+      <div className="rp-card" style={{
+        background:"#fff", borderRadius:20,
+        border:"1.5px solid #e0e7ff", overflow:"hidden",
+      }}>
+        <div style={{ height:4, background:"linear-gradient(90deg,#4338ca,#6366f1,#818cf8)" }} />
+
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", minWidth:1150 }}>
+            <thead>
+              <tr style={{ background:"#eef2ff" }}>
+                {/* Checkbox all */}
+                <th style={{ padding:"12px 16px", width:40 }}>
+                  <input
+                    type="checkbox"
+                    className="rp-cb"
+                    checked={allCurrentChecked}
+                    onChange={toggleAll}
+                  />
+                </th>
+                {["#","Invoice No","Customer","Phone","Amount","Paid","Balance","Method","Status","By","Action"].map((h,i) => (
+                  <th key={i} style={{
+                    padding:"12px 16px", textAlign:"left",
+                    fontSize:11, fontWeight:700, color:INDIGO,
+                    borderBottom:"1px solid #dbeafe", whiteSpace:"nowrap",
+                  }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={12} style={{ padding:50, textAlign:"center", color:"#9ca3af" }}>
+                    Loading…
+                  </td>
+                </tr>
+              ) : current.length > 0 ? current.map((inv, i) => {
+                const mb = methodBadge(inv.payment_method);
+                const sb = statusBadge(inv.payment_status);
+                const isChecked = checkedIds.has(inv.invoice_no);
+                return (
+                  <tr
+                    key={i}
+                    className="rp-row"
+                    onClick={() => navigate(`/invoice/${inv.invoice_no}`)}
+                    style={{ background: isChecked ? "#f0f4ff" : undefined }}
+                  >
+                    {/* Checkbox */}
+                    <td style={{ padding:"13px 16px" }} onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        className="rp-cb"
+                        checked={isChecked}
+                        onChange={e => toggleCheck(inv.invoice_no, e)}
+                      />
+                    </td>
+
+                    <td style={{ padding:"13px 16px" }}>{indexOfFirst + i + 1}</td>
+
+                    <td style={{ padding:"13px 16px" }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                        <div style={{
+                          width:30, height:30, borderRadius:9,
+                          background:"#eef2ff", display:"flex",
+                          alignItems:"center", justifyContent:"center",
+                        }}>
+                          <Receipt size={13} color={INDIGO} />
+                        </div>
+                        <span style={{ fontWeight:700, color:INDIGO }}>{inv.invoice_no}</span>
+                      </div>
+                    </td>
+
+                    <td style={{ padding:"13px 16px" }}>{inv.customer_name}</td>
+                    <td style={{ padding:"13px 16px", color:"#6b7280" }}>{inv.customer_phone}</td>
+
+                    <td style={{ padding:"13px 16px", fontWeight:700, color:"#1e1b4b" }}>
+                      ₹{Number(inv.total_amount).toLocaleString()}
+                    </td>
+                    <td style={{ padding:"13px 16px", fontWeight:700, color:"#16a34a" }}>
+                      ₹{Number(inv.paid_amount).toLocaleString()}
+                    </td>
+                    <td style={{ padding:"13px 16px", fontWeight:700,
+                      color: Number(inv.balance_amount) > 0 ? "#dc2626" : "#9ca3af" }}>
+                      ₹{Number(inv.balance_amount).toLocaleString()}
+                    </td>
+
+                    <td style={{ padding:"13px 16px" }}>
+                      <span style={{
+                        padding:"5px 11px", borderRadius:20, fontSize:11,
+                        fontWeight:700, background:mb.bg, color:mb.color,
+                      }}>{inv.payment_method || "-"}</span>
+                    </td>
+
+                    <td style={{ padding:"13px 16px" }}>
+                      <span style={{
+                        padding:"5px 11px", borderRadius:20, fontSize:11,
+                        fontWeight:700, background:sb.bg, color:sb.color,
+                      }}>{STATUS_LABEL[inv.payment_status] || inv.payment_status}</span>
+                    </td>
+
+                    <td style={{ padding:"13px 16px", color:"#6b7280" }}>
+                      {inv.cashier_name || "-"}
+                    </td>
+
+                    <td style={{ padding:"13px 16px" }}>
+                      <button
+                        className="rp-view-btn"
+                        onClick={e => { e.stopPropagation(); navigate(`/invoice/${inv.invoice_no}`); }}
+                        style={{
+                          display:"flex", alignItems:"center", gap:6,
+                          background:"#eef2ff", border:"1px solid #c7d2fe",
+                          color:INDIGO, borderRadius:10, padding:"7px 14px",
+                          cursor:"pointer", fontWeight:600, fontSize:12, fontFamily:FONT,
+                        }}
+                      >
+                        <Eye size={13} /> View
+                      </button>
+                    </td>
+                  </tr>
+                );
+              }) : (
+                <tr>
+                  <td colSpan={12} style={{ padding:50, textAlign:"center" }}>
+                    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
+                      <FileText size={32} color="#c7d2fe" />
+                      <span style={{ color:"#9ca3af" }}>No invoices found</span>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* PAGINATION */}
+      {totalPages > 1 && (
+        <div style={{
+          display:"flex", alignItems:"center",
+          justifyContent:"space-between", marginTop:18,
+        }}>
+          <button className="rp-pg-btn" onClick={() => goTo(currentPage - 1)}
+            disabled={currentPage === 1}
+            style={{
+              display:"flex", alignItems:"center", gap:6,
+              padding:"8px 16px", background:"#fff",
+              border:"1px solid #dbeafe", borderRadius:10,
+              cursor:"pointer", fontFamily:FONT,
+            }}>
+            <ChevronLeft size={15} /> Prev
+          </button>
+
+          <div style={{ display:"flex", gap:6, flexWrap:"wrap", justifyContent:"center" }}>
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
+              <button key={p} onClick={() => goTo(p)} className="rp-pg-btn" style={{
+                width:36, height:36, borderRadius:10,
+                border:"1px solid #dbeafe",
+                background: currentPage === p ? INDIGO : "#fff",
+                color: currentPage === p ? "#fff" : INDIGO,
+                fontWeight:700, cursor:"pointer", fontFamily:FONT,
+              }}>{p}</button>
+            ))}
+          </div>
+
+          <button className="rp-pg-btn" onClick={() => goTo(currentPage + 1)}
+            disabled={currentPage === totalPages}
+            style={{
+              display:"flex", alignItems:"center", gap:6,
+              padding:"8px 16px", background:"#fff",
+              border:"1px solid #dbeafe", borderRadius:10,
+              cursor:"pointer", fontFamily:FONT,
+            }}>
+            Next <ChevronRight size={15} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
