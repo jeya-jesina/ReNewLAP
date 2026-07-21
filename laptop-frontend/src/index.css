@@ -39,3 +39,22 @@ input[type="number"] {
   appearance: textfield;
   -moz-appearance: textfield;
 }
+@keyframes clientScroll {
+  0% {
+    transform: translateX(0%);
+  }
+
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-client-scroll {
+  display: flex;
+  width: max-content;
+  animation: clientScroll 20s linear infinite;
+}
+
+.animate-client-scroll:hover {
+  animation-play-state: paused;
+}
