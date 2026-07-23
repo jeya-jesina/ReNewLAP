@@ -1,12 +1,12 @@
 import React from "react";
 import Banner from "./banner";
 import LaptopDeals from "./offer";
-import BudgerRefurbished from "./budgerRefurbished";
-import CrazyRefurbished from "./crazyRefurbished";
 import Deals from "./deals";
 import Customer from "./customer";
 import Clients from "./clients";
 import Enquire from "./enquire";
+import CrazyRefurbished from "./crazyRefurbished";
+import BudgerRefurbished from "./budgerRefurbished";
 
 
 export default function Home() {
@@ -14,9 +14,9 @@ export default function Home() {
     <>
       <Banner />
       <Deals />
-      <BudgerRefurbished />
+      <CrazyRefurbished/>
       <LaptopDeals />
-      <CrazyRefurbished />
+      <BudgerRefurbished/>
       <Customer />
       <Clients />
       <Enquire />
