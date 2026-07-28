@@ -15,13 +15,13 @@ export default function Banner() {
         {/* Banner */}
        <div className="relative overflow-hidden flex justify-center">
 
-  <img
-    src={bannerHeroImage}
-    alt="Banner"
-    className="w-[91%] h-[260px] sm:h-[340px] md:h-[420px] lg:h-[470px] xl:h-[500px] object-cover object-center"
-  />
+<img
+  src={bannerHeroImage}
+  alt="Banner"
+  className="w-[94%] h-[260px] sm:h-[340px] md:h-[420px] lg:h-[470px] xl:h-[500px] object-cover object-center"
+/>
 
-  <div className="absolute inset-0 w-[90%] mx-auto flex items-center">
+<div className="absolute inset-0 w-[94%] mx-auto flex items-center">
 
             <div className="pl-6 sm:pl-10 md:pl-14 lg:pl-16 max-w-[760px]">
 
