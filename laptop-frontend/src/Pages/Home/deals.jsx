@@ -4,7 +4,7 @@ import laptopImg from "../../assets/deals/laptop.png"; // change path if needed
 const Deals = () => {
   return (
     <section className="w-full bg-[#f3f3f3] py-12 px-4">
-      <div className="max-w-[1080px] mx-auto bg-[#eff4fc] rounded-[32px] overflow-hidden shadow-sm">
+      <div className="max-w-[91%] mx-auto bg-[#eff4fc] rounded-[32px] overflow-hidden shadow-sm">
         
         {/* TOP BAR: GRADIENT HEADER SECTION */}
         <div className="bg-gradient-to-r from-[#f7cbb1] to-[#ff7a7a] px-8 py-5 flex flex-col sm:flex-row justify-between items-center gap-4">

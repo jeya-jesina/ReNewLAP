@@ -121,9 +121,11 @@ export default function CrazyRefurbished() {
   const [activeFilter, setActiveFilter] = useState(0);
 
   return (
-    <div className="w-full bg-white px-4 py-6 sm:px-8">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
+    <section className="w-full bg-white py-8">
+      <div className="max-w-[93%] mx-auto px-6 md:px-8 lg:px-10">
+
+        {/* Header */}
+        <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-gray-900">
           CRAZY REFURBISHED DEALS
         </h1>
@@ -132,8 +134,8 @@ export default function CrazyRefurbished() {
         </button>
       </div>
 
-      {/* Filter pills */}
-      <div className="flex flex-wrap gap-3 mb-6">
+       {/* Filter pills */}
+        <div className="flex flex-wrap gap-3 mb-6">
         {filters.map((f, i) => (
           <button
             key={f.label}
@@ -153,7 +155,7 @@ export default function CrazyRefurbished() {
       </div>
 
       {/* Product grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
         {products.map((p, idx) => {
           const discountPct = Math.round(((p.mrp - p.price) / p.mrp) * 100);
           return (
@@ -214,6 +216,8 @@ export default function CrazyRefurbished() {
           );
         })}
       </div>
-    </div>
+   
+      </div>
+    </section>
   );
 }

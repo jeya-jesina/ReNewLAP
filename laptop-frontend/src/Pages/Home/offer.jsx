@@ -36,14 +36,13 @@ export default function LaptopDeals() {
     <div
       className="min-h-screen w-full flex items-center justify-center p-6"
       style={{ backgroundColor: "#E1EDFF" }}
-    >      <div className="w-full max-w-5xl">
+    >      <div className="w-full max-w-6xl">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {cards.map((card, idx) => (
             <div
               key={idx}
               style={{ backgroundColor: card.bg }}
-              className="p-6 flex flex-col justify-between min-h-[280px] hover:shadow-lg transition-shadow duration-300"
-            >
+className="p-8 flex flex-col justify-between min-h-[420px] hover:shadow-lg transition-shadow duration-300">
               <div>
                 <h3
                   className="text-xl font-semibold leading-snug"
